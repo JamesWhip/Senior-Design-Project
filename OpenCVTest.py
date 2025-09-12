@@ -2,52 +2,39 @@ import cv2
 import numpy as np
 
 # Load image
-image_path = "VirtualBoard.png"   # replace with your image
-image = cv2.imread(image_path)
+image_path = "chessboard.jpg"   # replace with your image
+img = cv2.imread(image_path)
 
-if image is None:
+if img is None:
     print("Error: Could not load image.")
+    exit() 
+
+gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
+edges = cv2.Canny(gray,90,150,apertureSize = 3)
+cv2.imwrite('canny.jpg',edges)
+
+lines = cv2.HoughLines(edges,1,np.pi/180,150)
+
+if not lines.any():
+    print('No lines were found')
     exit()
 
-# Convert to grayscale
-gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+for line in lines:
+    rho,theta = line[0]
+    a = np.cos(theta)
+    b = np.sin(theta)
+    x0 = a*rho
+    y0 = b*rho
+    x1 = int(x0 + 1000*(-b))
+    y1 = int(y0 + 1000*(a))
+    x2 = int(x0 - 1000*(-b))
+    y2 = int(y0 - 1000*(a))
 
-# Smooth to reduce noise
-blur = cv2.GaussianBlur(gray, (11,11), 0)
-
-# Detect edges with Canny
-edges = cv2.Canny(blur, 50, 150)
-
-# Find contours (potential pieces)
-contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-# Create masks for pieces
-mask_white = np.zeros_like(gray)
-mask_black = np.zeros_like(gray)
-
-for cnt in contours:
-    area = cv2.contourArea(cnt)
-    if area > 100:  # filter small contours (board lines, noise)
-        x, y, w, h = cv2.boundingRect(cnt)
-        roi = gray[y:y+h, x:x+w]
-
-        mean_intensity = np.mean(roi)
-
-        # Classify based on brightness
-        if mean_intensity > 127:  
-            cv2.drawContours(mask_white, [cnt], -1, 255, -1)
-        else:
-            cv2.drawContours(mask_black, [cnt], -1, 255, -1)
-
-# Apply masks
-white_pieces = cv2.bitwise_and(image, image, mask=mask_white)
-black_pieces = cv2.bitwise_and(image, image, mask=mask_black)
+    cv2.line(img,(x1,y1),(x2,y2),(0,0,255),2)
 
 # Show results
-cv2.imshow("Original", image)
+cv2.imshow("Original", img)
 cv2.imshow("Edges", edges)
-cv2.imshow("White Pieces", white_pieces)
-cv2.imshow("Black Pieces", black_pieces)
 
 cv2.waitKey(0)
 cv2.destroyAllWindows()
