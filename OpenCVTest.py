@@ -27,7 +27,7 @@ if ret:
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
     corners = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
 
-    tileSize = int(abs(corners[0][0][0] - corners[1][0][0]))
+    tileSize = 90 # int(abs(corners[0][0][0] - corners[1][0][0]))
 
     tiles = [[[0,0] for _ in range(8)] for _ in range(8)]
 
@@ -35,7 +35,7 @@ if ret:
     for corner in corners:
         x = int(corner[0][0])
         y = int(corner[0][1])
-        tiles[i%7+1][i//7+1] = [x,y]
+        tiles[i//7+1][i%7+1] = [x,y]
         i += 1
 
     for i in range(1,8):
