@@ -3,23 +3,25 @@ import numpy as np
 from scipy import stats
 
 # Load image
-image_path = "VirtualBoard.png"   # replace with your image
+image_path = "chessboard2.jpg"   # replace with your image
 img = cv2.imread(image_path)
 
 if img is None:
     print("Error: Could not load image.")
     exit() 
 
+print("Found image")
 
 pattern_size = (7, 7)
 
 
 gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
 edges = cv2.Canny(gray,90,150,apertureSize = 3)
-cv2.imwrite('canny.jpg',gray)
+cv2.imwrite('canny.jpg',edges)
 
+print("Finding corners")
 # Find the chessboard corners
-ret, corners = cv2.findChessboardCorners(gray, pattern_size, None)
+ret, corners = cv2.findChessboardCorners(edges, pattern_size, None)
 
 if ret:
     print("Chessboard corners found successfully.")
@@ -27,7 +29,7 @@ if ret:
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
     corners = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
 
-    tileSize = 90 # int(abs(corners[0][0][0] - corners[1][0][0]))
+    tileSize = int(abs(corners[0][0][0] - corners[1][0][0]))
 
     tiles = [[[0,0] for _ in range(8)] for _ in range(8)]
 
@@ -55,8 +57,6 @@ if ret:
     # Draw and display the corners on the original image
     img_corners = cv2.drawChessboardCorners(img.copy(), pattern_size, corners, ret)
     cv2.imshow('Corners', img_corners)
-
-
 
 else:
     print("Could not find chessboard corners.")
