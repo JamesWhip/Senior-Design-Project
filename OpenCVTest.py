@@ -5,6 +5,7 @@ from scipy import stats
 # Load image
 image_path = "chessboard2.jpg"   # replace with your image
 img = cv2.imread(image_path)
+split_img = [[None]*8]*8 
 
 if img is None:
     print("Error: Could not load image.")
@@ -37,21 +38,22 @@ if ret:
     for corner in corners:
         x = int(corner[0][0])
         y = int(corner[0][1])
-        tiles[i//7+1][i%7+1] = [x,y]
+        tiles[i//7][i%7] = [x,y]
         i += 1
 
-    for i in range(1,8):
-        x,y = tiles [1][i]
-        tiles[0][i] = [x,max(y-tileSize, 0)]
+    for i in range(0,7):
+        x,y = tiles [6][i]
+        tiles[7][i] = [x,max(y-tileSize, 0)]
 
     for i in range(0,8):
-        x,y = tiles [i][1]
-        tiles[i][0] = [max(x-tileSize, 0),y]
+        x,y = tiles [i][6]
+        tiles[i][7] = [max(x-tileSize, 0),y]
 
     for x in range(8):
         for y in range(8):
             posX,posY = tiles[x][y]
             sub_img = img[posY:posY+tileSize, posX:posX+tileSize]
+            split_img[x][y] = sub_img
             cv2.imwrite( "Squares/tile_" + str(x) + "_" + str(y) + ".jpg", sub_img)
 
     # Draw and display the corners on the original image
@@ -60,6 +62,13 @@ if ret:
 
 else:
     print("Could not find chessboard corners.")
+    exit()
+
+for x in range(8):
+    for y in range(8):
+        edge_density = np.count_nonzero(cv2.Canny(split_img[x][y], 90, 150)) / split_img[x][y].size
+        print(f"Tile:({x},{y}) Density:{edge_density}")
+
 
 cv2.waitKey(0)
 cv2.destroyAllWindows()
