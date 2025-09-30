@@ -5,7 +5,7 @@ from scipy import stats
 # Load image
 image_path = "chessboard2.jpg"   # replace with your image
 img = cv2.imread(image_path)
-split_img = [[None]*8]*8 
+split_img = [[None for _ in range(8)] for _ in range(8)] 
 
 if img is None:
     print("Error: Could not load image.")
@@ -53,6 +53,7 @@ if ret:
         for y in range(8):
             posX,posY = tiles[x][y]
             sub_img = img[posY:posY+tileSize, posX:posX+tileSize]
+            sub_img = cv2.Canny(sub_img, 50, 150)
             split_img[x][y] = sub_img
             cv2.imwrite( "Squares/tile_" + str(x) + "_" + str(y) + ".jpg", sub_img)
 
@@ -66,7 +67,7 @@ else:
 
 for x in range(8):
     for y in range(8):
-        edge_density = np.count_nonzero(cv2.Canny(split_img[x][y], 90, 150)) / split_img[x][y].size
+        edge_density = np.count_nonzero(split_img[x][y]) / split_img[x][y].size
         print(f"Tile:({x},{y}) Density:{edge_density}")
 
 
