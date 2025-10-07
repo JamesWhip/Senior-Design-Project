@@ -52,8 +52,8 @@ if ret:
     for x in range(8):
         for y in range(8):
             posX,posY = tiles[x][y]
-            sub_img = img[posY:posY+tileSize, posX:posX+tileSize]
-            sub_img = cv2.Canny(sub_img, 50, 150)
+            sub_img = edges[posY:posY+tileSize, posX:posX+tileSize]
+            #sub_img = cv2.Canny(sub_img, 50, 150)
             split_img[x][y] = sub_img
             cv2.imwrite( "Squares/tile_" + str(x) + "_" + str(y) + ".jpg", sub_img)
 
@@ -65,10 +65,13 @@ else:
     print("Could not find chessboard corners.")
     exit()
 
+threshold = 0.1
+
 for x in range(8):
     for y in range(8):
         edge_density = np.count_nonzero(split_img[x][y]) / split_img[x][y].size
-        print(f"Tile:({x},{y}) Density:{edge_density}")
+
+        print(f"Tile:({x},{y}) Density:{edge_density}, Piece:{edge_density>=threshold}")
 
 
 cv2.waitKey(0)
