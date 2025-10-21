@@ -1,55 +1,95 @@
-# V_ref1 = 0.720V
-# Current limit = Vref * 2 = 1.440A
-# V_ref2 = 0.727V
-# Current limit = Vref * 2 = 1.454A
+# two-motor stepper test for Raspberry Pi (full-step mode: MS1/2/3 = LOW)
+# M1: DIR=21, STEP=20
+# M2: DIR=16, STEP=12
 
 import RPi.GPIO as GPIO
 import time
 
-# --- pin map (BCM) ---
-DIR1, STEP1 = 26, 19
+# --- pins ---
+DIR1, STEP1 = 21, 20
 DIR2, STEP2 = 16, 12
-EN1, EN2   = 6, 5
 
 # --- setup ---
 GPIO.setmode(GPIO.BCM)
-for p in (DIR1, STEP1, DIR2, STEP2, EN1, EN2):
-    GPIO.setup(p, GPIO.OUT, initial=GPIO.LOW)
+GPIO.setwarnings(False)
+for p in [DIR1, STEP1, DIR2, STEP2]:
+    GPIO.setup(p, GPIO.OUT)
+    GPIO.output(p, GPIO.LOW)
 
-# EN is active-low; start disabled (HIGH) for safety
-GPIO.output(EN1, GPIO.HIGH)
-GPIO.output(EN2, GPIO.HIGH)
-
-def enable(driver=1, on=True):
-    en = EN1 if driver == 1 else EN2
-    GPIO.output(en, GPIO.LOW if on else GPIO.HIGH)
-
-def step_motor(dir_pin, step_pin, steps, cw=True, step_delay=0.001):
+# set DIR and wait a moment so the driver latches the direction before stepping
+def dir_set(dir_pin, cw=True, t_settle=0.010):
     GPIO.output(dir_pin, GPIO.HIGH if cw else GPIO.LOW)
-    for _ in range(abs(steps)):
+    time.sleep(t_settle)
+
+# generate N steps on one motor at a fixed safe rate
+def step_many(step_pin, n_steps, pulse_delay=0.003):
+    for _ in range(n_steps):
         GPIO.output(step_pin, GPIO.HIGH)
-        time.sleep(step_delay)
+        time.sleep(pulse_delay)     # step high width
         GPIO.output(step_pin, GPIO.LOW)
-        time.sleep(step_delay)
+        time.sleep(pulse_delay)     # low time between steps
 
-def move_driver(driver, steps, cw=True, step_delay=0.001):
-    # pick pins
-    if driver == 1:
-        d, s = DIR1, STEP1
-    else:
-        d, s = DIR2, STEP2
-    # enable, move, disable
-    enable(driver, True)
-    step_motor(d, s, steps, cw=cw, step_delay=step_delay)
-    enable(driver, False)
+# visible jogs: a few full steps per "click" so motion is obvious
+def jog_visible(step_pin, clicks, steps_per_click=5, pulse_delay=0.003, pause_between=0.20):
+    for _ in range(clicks):
+        step_many(step_pin, steps_per_click, pulse_delay=pulse_delay)
+        time.sleep(pause_between)
 
-def chess_move(x_steps, y_steps, x_cw=True, y_cw=True, step_delay=0.001, park_disable=True):
-    # example: move X then Y, then disable both to cool
-    move_driver(1, x_steps, cw=x_cw, step_delay=step_delay)
-    move_driver(2, y_steps, cw=y_cw, step_delay=step_delay)
-    if park_disable:
-        enable(1, False)
-        enable(2, False)
+try:
+    # ----- Motor 1: visible jogs -----
+    print("M1: CW jogs...")
+    dir_set(DIR1, cw=True)
+    jog_visible(STEP1, clicks=10, steps_per_click=5, pulse_delay=0.003, pause_between=0.20)
+
+    print("M1: CCW jogs...")
+    dir_set(DIR1, cw=False)
+    jog_visible(STEP1, clicks=10, steps_per_click=5, pulse_delay=0.003, pause_between=0.20)
+
+    # ----- Motor 1: continuous -----
+    print("M1: CW continuous...")
+    dir_set(DIR1, cw=True)
+    step_many(STEP1, n_steps=400, pulse_delay=0.003)
+
+    print("M1: CCW continuous...")
+    dir_set(DIR1, cw=False)
+    step_many(STEP1, n_steps=400, pulse_delay=0.003)
+
+    # ----- Motor 2: visible jogs -----
+    print("M2: CW jogs...")
+    dir_set(DIR2, cw=True)
+    jog_visible(STEP2, clicks=10, steps_per_click=5, pulse_delay=0.003, pause_between=0.20)
+
+    print("M2: CCW jogs...")
+    dir_set(DIR2, cw=False)
+    jog_visible(STEP2, clicks=10, steps_per_click=5, pulse_delay=0.003, pause_between=0.20)
+
+    # ----- Motor 2: continuous -----
+    print("M2: CW continuous...")
+    dir_set(DIR2, cw=True)
+    step_many(STEP2, n_steps=400, pulse_delay=0.003)
+
+    print("M2: CCW continuous...")
+    dir_set(DIR2, cw=False)
+    step_many(STEP2, n_steps=400, pulse_delay=0.003)
+
+    # ----- Both together (lock-step) -----
+    print("Both: CW...")
+    dir_set(DIR1, cw=True)
+    dir_set(DIR2, cw=True)
+    for _ in range(400):
+        GPIO.output(STEP1, GPIO.HIGH); GPIO.output(STEP2, GPIO.HIGH)
+        time.sleep(0.003)
+        GPIO.output(STEP1, GPIO.LOW);  GPIO.output(STEP2, GPIO.LOW)
+        time.sleep(0.003)
+
+    print("Both: CCW...")
+    dir_set(DIR1, cw=False)
+    dir_set(DIR2, cw=False)
+    for _ in range(400):
+        GPIO.output(STEP1, GPIO.HIGH); GPIO.output(STEP2, GPIO.HIGH)
+        time.sleep(0.003)
+        GPIO.output(STEP1, GPIO.LOW);  GPIO.output(STEP2, GPIO.LOW)
+        time.sleep(0.003)
 
 if __name__ == "__main__":
     try:
