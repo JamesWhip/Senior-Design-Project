@@ -9,6 +9,7 @@ import time
 DIR1, STEP1 = 21, 20
 DIR2, STEP2 = 16, 12
 
+# --- setup ---
 GPIO.setmode(GPIO.BCM)
 GPIO.setwarnings(False)
 for p in [DIR1, STEP1, DIR2, STEP2]:
@@ -90,6 +91,15 @@ try:
         GPIO.output(STEP1, GPIO.LOW);  GPIO.output(STEP2, GPIO.LOW)
         time.sleep(0.003)
 
-    print("Done.")
-finally:
-    GPIO.cleanup()
+if __name__ == "__main__":
+    try:
+        # demo: “move a piece” then rest
+        chess_move(x_steps=1600, y_steps=800, x_cw=True, y_cw=False, step_delay=0.0008, park_disable=True)
+        time.sleep(5)  # idle cool-down window
+        # next move...
+        chess_move(x_steps=400, y_steps=400, x_cw=False, y_cw=True, step_delay=0.0008, park_disable=True)
+    finally:
+        # make sure outputs are off if we exit
+        GPIO.output(EN1, GPIO.HIGH)
+        GPIO.output(EN2, GPIO.HIGH)
+        GPIO.cleanup()
