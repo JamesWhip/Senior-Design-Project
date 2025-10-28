@@ -11,7 +11,7 @@ p = GPIO.PWM(MAG_PIN, FREQ_HZ)
 
 try:
     p.start(DUTY)     # magnet “strength” via duty
-    time.sleep(10)    # hold for 10 s
+    time.sleep(30)    # hold for 10 s
     p.ChangeDutyCycle(0)
 finally:
     p.stop()
