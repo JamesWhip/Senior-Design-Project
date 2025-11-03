@@ -3,7 +3,7 @@ import numpy as np
 from scipy import stats
 
 # Load image
-image_path = "chessboard2.jpg"   # replace with your image
+image_path = "old/image.png"   # replace with your image
 img = cv2.imread(image_path)
 split_img = [[None for _ in range(8)] for _ in range(8)] 
 
@@ -17,62 +17,71 @@ pattern_size = (7, 7)
 
 
 gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
-edges = cv2.Canny(gray,90,150,apertureSize = 3)
-cv2.imwrite('canny.jpg',edges)
+blur = cv2.GaussianBlur(gray, (5, 5), 0)
 
-print("Finding corners")
-# Find the chessboard corners
-ret, corners = cv2.findChessboardCorners(edges, pattern_size, None)
+ret,otsu_binary = cv2.threshold(blur,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
 
-if ret:
-    print("Chessboard corners found successfully.")
-    # Refine the corner locations to sub-pixel accuracy
-    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
-    corners = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
 
-    tileSize = int(abs(corners[0][0][0] - corners[1][0][0]))
+edges2 = cv2.Canny(otsu_binary,90,150,apertureSize = 3)
 
-    tiles = [[[0,0] for _ in range(8)] for _ in range(8)]
+canny = cv2.Canny(blur,90,150,apertureSize = 3)
 
-    i = 0
-    for corner in corners:
-        x = int(corner[0][0])
-        y = int(corner[0][1])
-        tiles[i//7][i%7] = [x,y]
-        i += 1
+kernel = np.ones((2, 2), np.uint8) 
+dilation = cv2.dilate(canny, kernel, iterations=1) 
 
-    for i in range(0,7):
-        x,y = tiles [6][i]
-        tiles[7][i] = [x,max(y-tileSize, 0)]
+lines = cv2.HoughLinesP(dilation, 1, np.pi/180, threshold=200, minLineLength=200, maxLineGap=100)
 
-    for i in range(0,8):
-        x,y = tiles [i][6]
-        tiles[i][7] = [max(x-tileSize, 0),y]
+empty = np.zeros(canny.shape, np.uint8)
 
-    for x in range(8):
-        for y in range(8):
-            posX,posY = tiles[x][y]
-            sub_img = edges[posY:posY+tileSize, posX:posX+tileSize]
-            #sub_img = cv2.Canny(sub_img, 50, 150)
-            split_img[x][y] = sub_img
-            cv2.imwrite( "Squares/tile_" + str(x) + "_" + str(y) + ".jpg", sub_img)
+if lines is not None:
+    for i, line in enumerate(lines):
+        x1, y1, x2, y2 = line[0]
+        
+        # draw lines
+        cv2.line(empty, (x1, y1), (x2, y2), (255,255,255), 2)
+ 
+cv2.imshow("edge", canny)
+cv2.imshow("lines", empty)
 
-    # Draw and display the corners on the original image
-    img_corners = cv2.drawChessboardCorners(img.copy(), pattern_size, corners, ret)
-    cv2.imshow('Corners', img_corners)
+board_contours, hierarchy = cv2.findContours(empty, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
-else:
-    print("Could not find chessboard corners.")
-    exit()
+square_centers=list()
 
-threshold = 0.1
+# draw filtered rectangles to "canny" image for better visualization
+board_squared = canny.copy()  
 
-for x in range(8):
-    for y in range(8):
-        edge_density = np.count_nonzero(split_img[x][y]) / split_img[x][y].size
+for contour in board_contours:
+    if 2000 < cv2.contourArea(contour) < 20000:
+        # Approximate the contour to a simpler shape
+        epsilon = 0.02 * cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, epsilon, True)
 
-        print(f"Tile:({x},{y}) Density:{edge_density}, Piece:{edge_density>=threshold}")
+        # Ensure the approximated contour has 4 points (quadrilateral)
+        if len(approx) == 4:
+            pts = [pt[0] for pt in approx]  # Extract coordinates
 
+            # Define the points explicitly
+            pt1 = tuple(pts[0])
+            pt2 = tuple(pts[1])
+            pt4 = tuple(pts[2])
+            pt3 = tuple(pts[3])
+
+            x, y, w, h = cv2.boundingRect(contour)
+            center_x=(x+(x+w))/2
+            center_y=(y+(y+h))/2
+
+            square_centers.append([center_x,center_y,pt2,pt1,pt3,pt4])
+
+             
+
+            # Draw the lines between the points
+            cv2.line(board_squared, pt1, pt2, (255, 255, 0), 7)
+            cv2.line(board_squared, pt1, pt3, (255, 255, 0), 7)
+            cv2.line(board_squared, pt2, pt4, (255, 255, 0), 7)
+            cv2.line(board_squared, pt3, pt4, (255, 255, 0), 7)
+
+
+cv2.imshow("final", board_squared)
 
 cv2.waitKey(0)
 cv2.destroyAllWindows()
