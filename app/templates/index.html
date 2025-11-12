@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Flask Chess Multiplayer</title>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; background: #f9f9f9; }
+        .board-container { display: inline-block; position: relative; }
+        rect.square, g.square { cursor: pointer; pointer-events: all !important; }
+        use { pointer-events: none !important; }
+        .buttons { margin-top: 1rem; }
+        button {
+            background: #4CAF50; color: white;
+            border: none; padding: 8px 16px; margin: 0 4px;
+            border-radius: 4px; cursor: pointer;
+        }
+        button:hover { background: #45a049; }
+        footer { margin-top: 1rem; font-size: 0.9rem; color: #777; }
+        #color-display { font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h2>♟ Flask Chess — Multiplayer (Socket.IO)</h2>
+
+    <div id="board-container" class="board-container">{{ svg|safe }}</div>
+
+    <div class="buttons">
+        <button onclick="emitAction('undo')">Undo</button>
+        <button onclick="emitAction('reset')">Reset</button>
+    </div>
+
+    <footer>
+        <p>Room: <span id="room-name">{{ room_id }}</span></p>
+        <p id="color-display">Connecting...</p>
+        <p id="turn-display">Turn: {{ turn }}</p>
+    </footer>
+
+    <script>
+        const socket = io();
+        const room = "{{ room_id }}";
+        let selected = null;
+        let myColor = "spectator";
+
+        socket.emit("join", { room });
+
+        socket.on("player_color", data => {
+            myColor = data.color;
+            document.getElementById("color-display").textContent =
+                "You are " + (myColor === "spectator" ? "a spectator 👀" : myColor.toUpperCase());
+        });
+
+        socket.on("board_update", data => {
+            document.getElementById("board-container").innerHTML = data.svg;
+            document.getElementById("turn-display").textContent = "Turn: " + data.turn;
+            activateBoard();
+        });
+
+        function emitAction(action) {
+            socket.emit(action, { room });
+        }
+
+        function coordFromElement(el) {
+            for (const cls of el.classList) {
+                if (/^[a-h][1-8]$/.test(cls)) return cls;
+            }
+            return null;
+        }
+
+        function activateBoard() {
+            document.querySelectorAll('rect.square, g.square').forEach(el => {
+                const coord = coordFromElement(el);
+                if (!coord) return;
+                el.onclick = () => onSquareClick(coord);
+            });
+        }
+
+        function onSquareClick(coord) {
+            if (!selected) {
+                selected = coord;
+                highlightSquare(coord, true);
+            } else {
+                if (selected === coord) {
+                    highlightSquare(coord, false);
+                    selected = null;
+                    return;
+                }
+                socket.emit("move", { from: selected, to: coord, room });
+                highlightSquare(selected, false);
+                selected = null;
+            }
+        }
+
+        function highlightSquare(coord, on) {
+            document.querySelectorAll('.' + coord).forEach(el => {
+                el.style.stroke = on ? 'yellow' : '';
+                el.style.strokeWidth = on ? '3px' : '';
+            });
+        }
+
+        document.addEventListener('DOMContentLoaded', activateBoard);
+    </script>
+</body>
+</html>

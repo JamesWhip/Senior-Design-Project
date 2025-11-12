@@ -3,12 +3,12 @@ import mediapipe as mp
 import numpy as np
 
 PIXELS_PER_SQUARE = 80
-THRESHOLD = 0.05
+THRESHOLD = 0.08
 
 def detect_pieces(img, M):
     gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (3, 3), 0)
-    canny = cv2.Canny(blur,70,150,apertureSize = 3)
+    canny = cv2.Canny(blur,60,120,apertureSize = 3)
         
     kernel = np.ones((2, 2), np.uint8) 
     dilate = cv2.dilate(canny, kernel, iterations=1) 
