@@ -4,7 +4,7 @@ import PieceDetection as pd
 import chess
 
 def main():
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(1)
 
     if not cap.isOpened():
         print("Error: Could not open camera.")
@@ -21,36 +21,44 @@ def main():
     M = pd.calibrate(cap)
 
     while True:
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        keypress = cv2.waitKey(1) & 0xFF
+        if keypress == ord('q'):
             break
+        
+        if keypress == ord('<'):
+            pd.THRESHOLD -= 0.01
+            print(f"Threshold: {pd.THRESHOLD}")
+        if keypress == ord('>'):
+            pd.THRESHOLD += 0.01
+            print(f"Threshold: {pd.THRESHOLD}")
 
         ret, frame = cap.read()
         if not ret:
             print("Error: Could not read frame from camera. Exiting...")
             break
 
-        img = cv2.flip(frame, 1)
+        raw_img = frame #cv2.flip(frame, 1)
 
-        imgRGB = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        imgRGB = cv2.cvtColor(raw_img, cv2.COLOR_BGR2RGB)
         results = hands.process(imgRGB)
         
 
         # If hands are present in image(frame)
         if results.multi_hand_landmarks:
             # Both Hands are present in image(frame)
-            cv2.putText(img, 'Hand Detected', (250, 50),
+            cv2.putText(raw_img, 'Hand Detected', (250, 50),
                 cv2.FONT_HERSHEY_COMPLEX, 0.9,
                 (0, 255, 0), 2)
             
-            cv2.imshow('Raw Camera Feed', img)
+            cv2.imshow('Raw Camera Feed', raw_img)
             continue
         
         
-        cv2.imshow('Raw Camera Feed', img)
 
-        img, M = pd.detect_pieces(img, M)
+        processed_img, M = pd.detect_pieces(raw_img, M)
 
-        cv2.imshow('Camera Feed', img)
+        cv2.imshow('Raw Camera Feed', raw_img)
+        cv2.imshow('Camera Feed', processed_img)
 
         # Exit the loop on pressing 'q'
         

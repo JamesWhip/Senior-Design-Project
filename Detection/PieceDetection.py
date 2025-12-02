@@ -8,9 +8,9 @@ THRESHOLD = 0.08
 def detect_pieces(img, M):
     gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (3, 3), 0)
-    canny = cv2.Canny(blur,60,120,apertureSize = 3)
-        
-    kernel = np.ones((2, 2), np.uint8) 
+    canny = cv2.Canny(blur,20,100,apertureSize = 3)
+
+    kernel = np.ones((3, 3), np.uint8) 
     dilate = cv2.dilate(canny, kernel, iterations=1) 
 
         
@@ -20,7 +20,7 @@ def detect_pieces(img, M):
         for i, line in enumerate(lines):
             x1, y1, x2, y2 = line[0]
             
-            # draw lines
+            # draw lines black to remove them
             cv2.line(dilate, (x1, y1), (x2, y2), (0,0,0), 6)
 
     new_m = normalize_img(img, gray, canny)
@@ -30,15 +30,19 @@ def detect_pieces(img, M):
     norm_img = warp_img(img, M)
     norm_canny = warp_img(dilate, M)
     
-    tiles = get_tiles(norm_canny)
+    disk = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(13,13))
+
+    filled_canny = cv2.morphologyEx(norm_canny, cv2.MORPH_CLOSE, disk)
+    
+    tiles = get_tiles(filled_canny)
 
     for pos in tiles.keys():
         if tiles[pos] > THRESHOLD:
             x, y = pos_to_pixel(pos)
-            cv2.circle(norm_canny, (int(x+PIXELS_PER_SQUARE/2), int(y+PIXELS_PER_SQUARE/2)), PIXELS_PER_SQUARE//2, (255,0,0), 2)
+            cv2.circle(filled_canny, (int(x+PIXELS_PER_SQUARE/2), int(y+PIXELS_PER_SQUARE/2)), PIXELS_PER_SQUARE//2, (255,0,0), 2)
             
 
-    return norm_canny, M
+    return filled_canny, M
 
 def normalize_img(img, gray, edges):
     ret, corners = cv2.findChessboardCorners(edges, (7,7), None)
