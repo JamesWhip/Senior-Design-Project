@@ -1,10 +1,11 @@
 import cv2
 import mediapipe as mp
 import PieceDetection as pd
-import chess
+import Board
+import time
 
 def main():
-    cap = cv2.VideoCapture(1)
+    cap = cv2.VideoCapture(0)
 
     if not cap.isOpened():
         print("Error: Could not open camera.")
@@ -20,11 +21,16 @@ def main():
 
     M = pd.calibrate(cap)
 
+    board = Board.Board()
+
     while True:
         keypress = cv2.waitKey(1) & 0xFF
         if keypress == ord('q'):
             break
-        
+
+        if keypress == ord(' '):
+            board.set_board(Board.new_board())
+
         if keypress == ord('<'):
             pd.THRESHOLD -= 0.01
             print(f"Threshold: {pd.THRESHOLD}")
@@ -53,14 +59,19 @@ def main():
             cv2.imshow('Raw Camera Feed', raw_img)
             continue
         
-        
+        new_board, processed_img, M = pd.detect_pieces(raw_img, M)
 
-        processed_img, M = pd.detect_pieces(raw_img, M)
+        print(new_board)
+
+        if (board.validate_board_change(new_board)):
+            print("Valid Move!")
 
         cv2.imshow('Raw Camera Feed', raw_img)
         cv2.imshow('Camera Feed', processed_img)
 
-        # Exit the loop on pressing 'q'
+        time.sleep(0.1)
+
+        
         
 
     cap.release()

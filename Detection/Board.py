@@ -5,6 +5,9 @@ class Board:
         self.last_valid_board = new_board()
         self.chess = chess.Board()
 
+    def set_board(self, board : chess.Board):
+        self.chess = board
+    
     def validate_board_change(self, board):
         diffs = []
         for y in range(8): 
