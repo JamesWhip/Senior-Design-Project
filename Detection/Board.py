@@ -31,7 +31,7 @@ class Board:
             case 1, 0, 1:
                 # piece was taken
                 try:
-                    move = chess.Move.from_uci(chr(97 + moved_from_diffs[0][1]) + str(moved_from_diffs[0][0]+1) + chr(97 + moved_to_diffs[0][1]) + str(moved_to_diffs[0][0]+1))
+                    move = chess.Move.from_uci(chr(97 + moved_from_diffs[0][1]) + str(moved_from_diffs[0][0]+1) + chr(97 + take_piece_diffs[0][1]) + str(take_piece_diffs[0][0]+1))
                 except:
                     return False
             case _, _, _:

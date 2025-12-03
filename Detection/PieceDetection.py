@@ -66,11 +66,11 @@ def detect_pieces(img, M):
 
     t = 0
     if even_avg > odd_avg:
-        white_avg = (odd_avg + even_avg * 5) / 6
-        black_avg = odd_avg * 0.9
+        white_avg = (odd_avg + even_avg * 3) / 4
+        black_avg = odd_avg * 0.8
     else:
-        white_avg = (odd_avg * 5 + even_avg) / 6
-        black_avg = even_avg * 0.9
+        white_avg = (odd_avg * 3 + even_avg) / 4
+        black_avg = even_avg * 0.8
         t = 1
 
     ## comparing gray values not working because white piece on white square is darker than a white square, maybe just get center of image and 50/50 it

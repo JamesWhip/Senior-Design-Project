@@ -28,8 +28,10 @@ def main():
         if keypress == ord('q'):
             break
 
-        if keypress == ord(' '):
-            board.set_board(Board.new_board())
+        if keypress == ord('r'):
+            #board = Board.new_board()
+            #board.set_board()
+            pass
 
         if keypress == ord('<'):
             pd.THRESHOLD -= 0.01
