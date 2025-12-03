@@ -6,10 +6,23 @@
 #   • Carriage is homed so that (0,0) is the CENTER of A1
 #   • Board squares are TILE_INCHES pitch, 8×8 board with A1 bottom-left
 #   • No obstacle checking yet (pure geometric plan as requested)
+#
+# Added:
+#   • Socket.IO client to receive move commands over Wi-Fi
+#   • Event: "move_piece" with payload {"start": "E4", "end": "E5"}
+#   • CLI mode still available with: python3 motor_control_median.py cli
 
 import RPi.GPIO as GPIO
 import time
 from typing import List, Tuple
+import sys
+import socketio  # pip install "python-socketio[client]"
+
+# ----------------------------- Socket.IO config -----------------------------
+# Change this to James' backend URL, e.g. "http://192.168.1.50:3000"
+SOCKETIO_SERVER_URL = "http://172.17.107.68:3000"
+
+sio = socketio.Client()
 
 # ----------------------------- Pins (BCM) -----------------------------
 DIR1, STEP1 = 26, 19   # Motor A (left)
@@ -32,7 +45,7 @@ STEPS_PER_MM   = (STEPS_PER_REV * MICROSTEP) / BELT_PER_REV_MM  # 5.0
 STEPS_PER_IN   = int(round(STEPS_PER_MM * 25.4))                  # ≈127
 
 # Chessboard pitch (center-to-center) — keep your current value
-TILE_INCHES    = 1.5
+TILE_INCHES    = 1.65625  # inches
 STEPS_PER_TILE = int(round(STEPS_PER_IN * TILE_INCHES))
 HALF_TILE_STEPS = STEPS_PER_TILE // 2
 
@@ -97,8 +110,11 @@ def _move_corexy(dx_steps: int, dy_steps: int):
     for _ in range(steps):
         _pulse(step_a, step_b)
 
-def _mag_on(): _mag_pwm.ChangeDutyCycle(MAG_DUTY_MOVE)
-def _mag_off(): _mag_pwm.ChangeDutyCycle(0)
+def _mag_on():
+    _mag_pwm.ChangeDutyCycle(MAG_DUTY_MOVE)
+
+def _mag_off():
+    _mag_pwm.ChangeDutyCycle(0)
 
 # ----------------------------- Unit conversions -----------------------------
 def tiles_to_steps_x(delta_tiles: float) -> int:
@@ -163,9 +179,63 @@ def go_to_square_center(col0: int, row0: int):
     move_y_tiles(cy - cur_y_tiles)
     _enable_drives(False)
 
-# ----------------------------- Path planning helpers -----------------------------
 def _sign(v: float) -> int:
     return (v > 0) - (v < 0)
+
+def approach_square_with_early_magnet(col0: int, row0: int, early_tiles: float = 0.5):
+    """
+    Travel to (col0,row0) but switch magnet ON early_tiles before the center
+    along the final leg. Net motion is identical to go_to_square_center:
+    still X then Y; we just split the last leg into [leg - early] + [early].
+    """
+    cx, cy = center_of_square_tiles(col0, row0)
+    cur_x_tiles = x_pos_steps / STEPS_PER_TILE
+    cur_y_tiles = y_pos_steps / STEPS_PER_TILE
+
+    dx = cx - cur_x_tiles
+    dy = cy - cur_y_tiles
+
+    _enable_drives(True)
+    _mag_off()  # ensure we start this approach with magnet off
+
+    # Always keep axis order: X then Y.
+    if abs(dy) > 1e-6:
+        # --- Y is the final leg ---
+        # 1) Do full X with magnet off
+        if abs(dx) > 1e-6:
+            move_x_tiles(dx)
+
+        # 2) Split Y into (dy - early) + early, if we have enough length
+        sgn_y = _sign(dy)
+        if abs(dy) > early_tiles + 1e-6:
+            lead_y = dy - sgn_y * early_tiles
+            if abs(lead_y) > 1e-6:
+                move_y_tiles(lead_y)
+            # Turn magnet on for the last early_tiles as we slide under the piece
+            _mag_on()
+            move_y_tiles(sgn_y * early_tiles)
+        else:
+            # Short Y move: just turn magnet on for the whole Y leg
+            _mag_on()
+            move_y_tiles(dy)
+    else:
+        # --- No Y leg; use X as the final leg ---
+        sgn_x = _sign(dx)
+        if abs(dx) > early_tiles + 1e-6:
+            lead_x = dx - sgn_x * early_tiles
+            if abs(lead_x) > 1e-6:
+                move_x_tiles(lead_x)
+            _mag_on()
+            move_x_tiles(sgn_x * early_tiles)
+        else:
+            # Already very close: just engage magnet and finish X
+            _mag_on()
+            if abs(dx) > 1e-6:
+                move_x_tiles(dx)
+
+    _enable_drives(False)
+    # IMPORTANT: leave magnet ON so the next move (median path) starts with
+    # the piece already held.
 
 # ----------------------------- Path planning (median-lane, X-first) -----------------------------
 def plan_median_xfirst(start_sq: str, end_sq: str) -> List[Tuple[str, float]]:
@@ -195,13 +265,13 @@ def plan_median_xfirst(start_sq: str, end_sq: str) -> List[Tuple[str, float]]:
     segs.append(("Y", dy))                   # long Y while in aisle
     if s != 0:
         segs.append(("X", 0.5 * s))          # step sideways into column center
-    segs.append(("Y", -0.5))                 # drop into destination center
+    segs.append(("Y", -0.75))                # drop into destination center
     return segs
 
 def execute_segments_with_piece(segments: List[Tuple[str, float]], corner_dwell_s: float = 0.10):
     """
     Execute a preplanned list of axis-aligned segments while holding the piece.
-    Magnet ON for the whole path; small dwell between segments.
+    Magnet is on during this path (usually already engaged slightly before call).
     """
     _enable_drives(True)
     _mag_on()
@@ -222,17 +292,18 @@ def execute_segments_with_piece(segments: List[Tuple[str, float]], corner_dwell_
 def move_piece(start_sq: str, end_sq: str):
     """
     Full sequence:
-      1) Travel (no piece) to start center
+      1) Travel (no piece at first) to start square, with magnet turning on
+         ~0.5 tile before the center so it grabs the piece while sliding under.
       2) Plan median-lane path (X-first, aisle-correct)
       3) Execute while holding the piece
     """
     cs, rs = parse_square(start_sq)
     ce, re = parse_square(end_sq)
 
-    # 1) Travel to start
-    print(f"[Go] Moving empty carriage to {start_sq}...")
-    go_to_square_center(cs, rs)
-    print(f"[Pick] At {start_sq} center. Engaging magnet and moving to {end_sq} via medians...")
+    # 1) Travel to start with early magnet engagement
+    print(f"[Go] Moving empty carriage to {start_sq} (magnet will turn on ~0.5 tile early)...")
+    approach_square_with_early_magnet(cs, rs, early_tiles=0.5)
+    print(f"[Pick] At {start_sq} with magnet engaged. Moving to {end_sq} via medians...")
 
     # 2) Plan + 3) Execute
     segs = plan_median_xfirst(start_sq, end_sq)
@@ -247,47 +318,119 @@ def report():
     print(f"Pos ≈ ({x_in:.3f} in, {y_in:.3f} in) | "
           f"Tiles ≈ ({x_pos_steps/STEPS_PER_TILE:.3f}, {y_pos_steps/STEPS_PER_TILE:.3f})")
 
+# ----------------------------- Hardware cleanup -----------------------------
+def hardware_cleanup():
+    # Always leave hardware safe
+    try:
+        _mag_off()
+        _mag_pwm.stop()
+    except Exception:
+        pass
+    try:
+        GPIO.output(EN1, GPIO.HIGH)
+        GPIO.output(EN2, GPIO.HIGH)
+    except Exception:
+        pass
+    GPIO.cleanup()
+
+# ----------------------------- CLI mode (old behavior) -----------------------------
+def run_cli_mode():
+    print(f"Config: steps/in={STEPS_PER_IN}, steps/tile≈{STEPS_PER_TILE} (tile={TILE_INCHES}\")")
+    print("Assuming carriage is homed at A1 center (0,0).")
+    print('Enter moves as "E4, E5". Commands: pos, quit')
+
+    while True:
+        raw = input("> ").strip()
+        if not raw:
+            continue
+        low = raw.lower()
+
+        if low in ("q", "quit", "exit"):
+            break
+        if low in ("p", "pos", "where"):
+            report()
+            continue
+
+        # Expect "E4, E5"
+        try:
+            start_sq, end_sq = [s.strip().upper() for s in raw.split(",")]
+            parse_square(start_sq)
+            parse_square(end_sq)
+        except Exception:
+            print('Format error. Try: E4, E5   (or "pos", "quit")')
+            continue
+
+        try:
+            move_piece(start_sq, end_sq)
+            report()
+        except Exception as e:
+            print(f"[ERROR] {e}")
+
+# ----------------------------- Socket.IO handlers -----------------------------
+@sio.event
+def connect():
+    print("[NET] Connected to Socket.IO server")
+
+@sio.event
+def disconnect():
+    print("[NET] Disconnected from Socket.IO server")
+
+@sio.on("move_piece")
+def on_move_piece(data):
+    """
+    Expected payload shape:
+        { "start": "E4", "end": "E5" }
+    """
+    try:
+        start_sq = data.get("start", "").strip().upper()
+        end_sq   = data.get("end", "").strip().upper()
+        print(f"[NET] Received move_piece: {start_sq} -> {end_sq}")
+
+        # Validate squares before moving
+        parse_square(start_sq)
+        parse_square(end_sq)
+
+        move_piece(start_sq, end_sq)
+        report()
+
+        # Optional: emit ack back to server
+        sio.emit("move_piece_done", {"start": start_sq, "end": end_sq, "status": "ok"})
+    except Exception as e:
+        print(f"[NET ERROR] {e}")
+        try:
+            sio.emit("move_piece_done", {
+                "start": data.get("start"),
+                "end": data.get("end"),
+                "status": "error",
+                "message": str(e),
+            })
+        except Exception:
+            pass
+
+def run_socketio_mode():
+    print(f"Config: steps/in={STEPS_PER_IN}, steps/tile≈{STEPS_PER_TILE} (tile={TILE_INCHES}\")")
+    print("Assuming carriage is homed at A1 center (0,0).")
+    print(f"[NET] Connecting to Socket.IO server at {SOCKETIO_SERVER_URL} ...")
+    sio.connect(SOCKETIO_SERVER_URL)
+    print("[NET] Waiting for move commands (event: 'move_piece')...")
+    sio.wait()  # block here and process events
+
 # ----------------------------- Script entry -----------------------------
 if __name__ == "__main__":
     try:
-        print(f"Config: steps/in={STEPS_PER_IN}, steps/tile≈{STEPS_PER_TILE} (tile={TILE_INCHES}\")")
-        print("Assuming carriage is homed at A1 center (0,0).")
-        print('Enter moves as "E4, E5". Commands: pos, quit')
-
-        while True:
-            raw = input("> ").strip()
-            if not raw:
-                continue
-            low = raw.lower()
-
-            if low in ("q", "quit", "exit"):
-                break
-            if low in ("p", "pos", "where"):
-                report()
-                continue
-
-            # Expect "E4, E5"
-            try:
-                start_sq, end_sq = [s.strip().upper() for s in raw.split(",")]
-                parse_square(start_sq)
-                parse_square(end_sq)
-            except Exception:
-                print('Format error. Try: E4, E5   (or "pos", "quit")')
-                continue
-
-            try:
-                move_piece(start_sq, end_sq)
-                report()
-            except Exception as e:
-                print(f"[ERROR] {e}")
-
+        # If you want the old terminal behavior:
+        #   python3 motor_control_median.py cli
+        if len(sys.argv) > 1 and sys.argv[1].lower() == "cli":
+            run_cli_mode()
+        else:
+            run_socketio_mode()
+    except KeyboardInterrupt:
+        print("\n[SYS] KeyboardInterrupt — shutting down.")
     finally:
-        # Always leave hardware safe
-        try:
-            _mag_off()
-            _mag_pwm.stop()
-        except Exception:
-            pass
-        GPIO.output(EN1, GPIO.HIGH)
-        GPIO.output(EN2, GPIO.HIGH)
-        GPIO.cleanup()
+        hardware_cleanup()
+
+
+# Stop the service: sudo systemctl stop chessbot.service
+# Restart: sudo systemctl restart chessbot.service
+# Disable autostart:sudo systemctl disable chessbot.service
+# View logs: journalctl -u chessbot.service -f
