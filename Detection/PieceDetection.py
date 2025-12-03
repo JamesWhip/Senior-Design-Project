@@ -52,34 +52,41 @@ def detect_pieces(img, M):
         else:
             empty_tiles.append(pos)
     
-    white_tiles = []
-    black_tiles = []
+    odd_tiles = []
+    even_tiles = []
     for pos in empty_tiles:
         avg = np.mean(tile_rect(norm_img, pos))
         if sum(pos) % 2 == 0:
-            white_tiles.append(avg)
+            even_tiles.append(avg)
         else:
-            black_tiles.append(avg)
+            odd_tiles.append(avg)
 
-    white_avg = np.mean(white_tiles)
-    black_avg = np.mean(black_tiles)
-    b_w_avg = (black_avg + white_avg) / 2
+    even_avg = np.mean(even_tiles)
+    odd_avg = np.mean(odd_tiles)
 
+    t = 0
+    if even_avg > odd_avg:
+        white_avg = (odd_avg + even_avg * 5) / 6
+        black_avg = odd_avg * 0.9
+    else:
+        white_avg = (odd_avg * 5 + even_avg) / 6
+        black_avg = even_avg * 0.9
+        t = 1
 
     ## comparing gray values not working because white piece on white square is darker than a white square, maybe just get center of image and 50/50 it
     board = Board.empty_board()
     for pos in piece_tiles:
         avg = np.mean(tile_rect(norm_img, pos))
-        if sum(pos) % 2 == 0:
-            if white_avg > avg:
+        if sum(pos) % 2 == t:
+            if avg > white_avg:
                 board[pos[1]-1][pos[0]-1] = 'W'
             else:
                 board[pos[1]-1][pos[0]-1] = 'B'
         else:
-            if black_avg < avg:
-                board[pos[1]-1][pos[0]-1] = 'B'
-            else:
+            if avg > black_avg:
                 board[pos[1]-1][pos[0]-1] = 'W'
+            else:
+                board[pos[1]-1][pos[0]-1] = 'B'
 
     return board, norm_canny, M
 

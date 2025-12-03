@@ -15,27 +15,27 @@ class Board:
                 if self.last_valid_board[x][y] != board[x][y]:
                     diffs.append([x,y,self.last_valid_board[x][y],board[x][y]])
 
-        moved_from_count = 0
-        moved_to_count = 0
-        take_piece_count = 0
+        moved_from_diffs = []
+        moved_to_diffs = []
+        take_piece_diffs = []
         for x,y,a,b in diffs:
             match (a, b):
                 case ('W', '_') | ('B', '_'):
-                    moved_from_count += 1
+                    moved_from_diffs.append((x,y))
                 case ('_', 'W') | ('_', 'B'):
-                    moved_to_count += 1
+                    moved_to_diffs.append((x,y))
                 case ('B', 'W') | ('W', 'B'):
-                    take_piece_count += 1
+                    take_piece_diffs.append((x,y))
 
-        print(moved_from_count, moved_to_count, take_piece_count)
-        match moved_from_count, moved_to_count, take_piece_count:
+        print(len(moved_from_diffs), len(moved_to_diffs), len(take_piece_diffs))
+        match len(moved_from_diffs), len(moved_to_diffs), len(take_piece_diffs):
             case 1, 1, 0:
                 # try move
-                    move = chess.Move.from_uci(chr(97 + diffs[0][1]) + str(diffs[0][0]+1) + chr(97 + diffs[1][1]) + str(diffs[1][0]+1))
+                    move = chess.Move.from_uci(chr(97 + moved_from_diffs[0][1]) + str(moved_from_diffs[0][0]+1) + chr(97 + moved_to_diffs[0][1]) + str(moved_to_diffs[0][0]+1))
             case 1, 0, 1:
                 # piece was taken
                 try:
-                    move = chess.Move.from_uci(chr(97 + diffs[0][1]) + str(diffs[0][0]+1) + chr(97 + diffs[1][1]) + str(diffs[1][0]+1))
+                    move = chess.Move.from_uci(chr(97 + moved_from_diffs[0][1]) + str(moved_from_diffs[0][0]+1) + chr(97 + moved_to_diffs[0][1]) + str(moved_to_diffs[0][0]+1))
                 except:
                     return False
             case _, _, _:

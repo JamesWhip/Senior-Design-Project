@@ -43,7 +43,8 @@ def main():
             print("Error: Could not read frame from camera. Exiting...")
             break
 
-        raw_img = frame #cv2.flip(frame, 1)
+        raw_img = cv2.flip(frame, 1)
+        raw_img = cv2.rotate(raw_img, cv2.ROTATE_90_CLOCKWISE)
 
         imgRGB = cv2.cvtColor(raw_img, cv2.COLOR_BGR2RGB)
         results = hands.process(imgRGB)
