@@ -1,6 +1,8 @@
 import cv2
 import mediapipe as mp
 import numpy as np
+import Board
+
 
 PIXELS_PER_SQUARE = 80
 THRESHOLD = 0.08
@@ -8,9 +10,9 @@ THRESHOLD = 0.08
 def detect_pieces(img, M):
     gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (3, 3), 0)
-    canny = cv2.Canny(blur,60,120,apertureSize = 3)
-        
-    kernel = np.ones((2, 2), np.uint8) 
+    canny = cv2.Canny(blur,20,100,apertureSize = 3)
+
+    kernel = np.ones((3, 3), np.uint8) 
     dilate = cv2.dilate(canny, kernel, iterations=1) 
 
         
@@ -20,25 +22,66 @@ def detect_pieces(img, M):
         for i, line in enumerate(lines):
             x1, y1, x2, y2 = line[0]
             
-            # draw lines
+            # draw lines black to remove them
             cv2.line(dilate, (x1, y1), (x2, y2), (0,0,0), 6)
 
     new_m = normalize_img(img, gray, canny)
     if new_m is not None:
         M = new_m
 
-    norm_img = warp_img(img, M)
+    norm_img = warp_img(gray, M)
     norm_canny = warp_img(dilate, M)
     
+   # disk = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(13,13))
+
+    #filled_canny = cv2.morphologyEx(norm_canny, cv2.MORPH_CLOSE, disk)
+    
     tiles = get_tiles(norm_canny)
+
+    
+
+    empty_tiles = []
+    piece_tiles = []
 
     for pos in tiles.keys():
         if tiles[pos] > THRESHOLD:
             x, y = pos_to_pixel(pos)
             cv2.circle(norm_canny, (int(x+PIXELS_PER_SQUARE/2), int(y+PIXELS_PER_SQUARE/2)), PIXELS_PER_SQUARE//2, (255,0,0), 2)
-            
 
-    return norm_canny, M
+            piece_tiles.append(pos)
+        else:
+            empty_tiles.append(pos)
+    
+    white_tiles = []
+    black_tiles = []
+    for pos in empty_tiles:
+        avg = np.mean(tile_rect(norm_img, pos))
+        if sum(pos) % 2 == 0:
+            white_tiles.append(avg)
+        else:
+            black_tiles.append(avg)
+
+    white_avg = np.mean(white_tiles)
+    black_avg = np.mean(black_tiles)
+    b_w_avg = (black_avg + white_avg) / 2
+
+
+    ## comparing gray values not working because white piece on white square is darker than a white square, maybe just get center of image and 50/50 it
+    board = Board.empty_board()
+    for pos in piece_tiles:
+        avg = np.mean(tile_rect(norm_img, pos))
+        if sum(pos) % 2 == 0:
+            if white_avg > avg:
+                board[pos[1]-1][pos[0]-1] = 'W'
+            else:
+                board[pos[1]-1][pos[0]-1] = 'B'
+        else:
+            if black_avg < avg:
+                board[pos[1]-1][pos[0]-1] = 'B'
+            else:
+                board[pos[1]-1][pos[0]-1] = 'W'
+
+    return board, norm_canny, M
 
 def normalize_img(img, gray, edges):
     ret, corners = cv2.findChessboardCorners(edges, (7,7), None)
@@ -80,6 +123,10 @@ def get_tiles(img) -> dict:
         tiles[pos] =  np.count_nonzero(t) / max(t.size, 1)
 
     return tiles
+
+def get_color(img, pos):
+    tile = tile_rect(img, pos)
+    np.mean(tile, axis=(0,1))
 
 def tile_rect(img, pos):
     x = pos[0] 

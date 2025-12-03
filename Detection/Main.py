@@ -1,7 +1,8 @@
 import cv2
 import mediapipe as mp
 import PieceDetection as pd
-import chess
+import Board
+import time
 
 def main():
     cap = cv2.VideoCapture(0)
@@ -20,39 +21,57 @@ def main():
 
     M = pd.calibrate(cap)
 
+    board = Board.Board()
+
     while True:
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        keypress = cv2.waitKey(1) & 0xFF
+        if keypress == ord('q'):
             break
+
+        if keypress == ord(' '):
+            board.set_board(Board.new_board())
+
+        if keypress == ord('<'):
+            pd.THRESHOLD -= 0.01
+            print(f"Threshold: {pd.THRESHOLD}")
+        if keypress == ord('>'):
+            pd.THRESHOLD += 0.01
+            print(f"Threshold: {pd.THRESHOLD}")
 
         ret, frame = cap.read()
         if not ret:
             print("Error: Could not read frame from camera. Exiting...")
             break
 
-        img = cv2.flip(frame, 1)
+        raw_img = frame #cv2.flip(frame, 1)
 
-        imgRGB = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        imgRGB = cv2.cvtColor(raw_img, cv2.COLOR_BGR2RGB)
         results = hands.process(imgRGB)
         
 
         # If hands are present in image(frame)
         if results.multi_hand_landmarks:
             # Both Hands are present in image(frame)
-            cv2.putText(img, 'Hand Detected', (250, 50),
+            cv2.putText(raw_img, 'Hand Detected', (250, 50),
                 cv2.FONT_HERSHEY_COMPLEX, 0.9,
                 (0, 255, 0), 2)
             
-            cv2.imshow('Raw Camera Feed', img)
+            cv2.imshow('Raw Camera Feed', raw_img)
             continue
         
+        new_board, processed_img, M = pd.detect_pieces(raw_img, M)
+
+        print(new_board)
+
+        if (board.validate_board_change(new_board)):
+            print("Valid Move!")
+
+        cv2.imshow('Raw Camera Feed', raw_img)
+        cv2.imshow('Camera Feed', processed_img)
+
+        time.sleep(0.1)
+
         
-        cv2.imshow('Raw Camera Feed', img)
-
-        img, M = pd.detect_pieces(img, M)
-
-        cv2.imshow('Camera Feed', img)
-
-        # Exit the loop on pressing 'q'
         
 
     cap.release()
