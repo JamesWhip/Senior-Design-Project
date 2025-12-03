@@ -22,7 +22,7 @@ app.get("/", (req, res) => {
 });
 
 // HTTP endpoint to trigger a move, e.g.
-//   http://SERVER_IP:3000/move?start=E2&end=E4
+//   http://172.17.107.68:3000/move?start=E2&end=E4
 app.get("/move", (req, res) => {
   let { start, end } = req.query;
   if (!start || !end) {

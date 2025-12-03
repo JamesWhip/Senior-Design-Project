@@ -1,8 +1,9 @@
 canny.jpg
 Squares/
 .venv
-.pytest_cache/*
+.pytest_cache
 */.pytest_cache
 __pycache__/
 */__pycache__
 *.svg
+node_modules
