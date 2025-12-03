@@ -9,11 +9,7 @@ class Board:
         self.chess = board
     
     def validate_board_change(self, board):
-        diffs = []
-        for y in range(8): 
-            for x in range(8):
-                if self.last_valid_board[x][y] != board[x][y]:
-                    diffs.append([x,y,self.last_valid_board[x][y],board[x][y]])
+        diffs = get_board_diffs(self.last_valid_board, board)
 
         moved_from_diffs = []
         moved_to_diffs = []
@@ -58,3 +54,12 @@ def new_board():
     board.extend([['_' for _ in range(8)] for _ in range(4)])
     board.extend([['B' for _ in range(8)] for _ in range(2)])
     return board
+
+def get_board_diffs(board, new_board):
+    diffs = []
+    for y in range(8): 
+        for x in range(8):
+            if board[x][y] != new_board[x][y]:
+                diffs.append([x,y,board[x][y],new_board[x][y]])
+
+    return diffs

@@ -1,7 +1,7 @@
 import pytest
 import Board
 
-def test_validate_board_change():
+def test_new_board():
     b = Board.Board()
     assert(b.validate_board_change(Board.new_board()) == False)
     move_board = Board.new_board()
