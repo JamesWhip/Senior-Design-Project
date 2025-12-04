@@ -4,10 +4,23 @@ class Board:
     def __init__(self):
         self.last_valid_board = new_board()
         self.chess = chess.Board()
+        
 
     def set_board(self, board : chess.Board):
         self.chess = board
+        self.last_valid_board = board_to_color_grid(board)
     
+    def get_last_valid_board(self):
+        return self.last_valid_board
+    
+    def set_last_valid_board(self, board: list):
+        self.last_valid_board = board
+    
+
+    def reset(self):
+        self.chess = chess.Board()
+        self.last_valid_board = new_board()
+
     def validate_board_change(self, board):
         diffs = get_board_diffs(self.last_valid_board, board)
 
@@ -33,18 +46,18 @@ class Board:
                 try:
                     move = chess.Move.from_uci(chr(97 + moved_from_diffs[0][1]) + str(moved_from_diffs[0][0]+1) + chr(97 + take_piece_diffs[0][1]) + str(take_piece_diffs[0][0]+1))
                 except:
-                    return False
+                    return False, None
             case _, _, _:
                 # not a move
-                return False
+                return False, None
 
         print(move)
         if move in self.chess.legal_moves:
             self.chess.push(move)
             self.last_valid_board = board
-            return True
+            return True, move.uci()
         
-        return False
+        return False, None
     
 def empty_board():
     return [['_' for _ in range(8)] for _ in range(8)]
@@ -63,3 +76,24 @@ def get_board_diffs(board, new_board):
                 diffs.append([x,y,board[x][y],new_board[x][y]])
 
     return diffs
+
+def board_to_color_grid(board: chess.Board):
+    grid = []
+
+    for rank in range(1, 9):  # ranks 1 → 8
+        row = []
+        for file in range(0, 8):  # files a=0 → h=7
+            square = chess.square(file, rank - 1)
+            piece = board.piece_at(square)
+
+            if piece is None:
+                row.append("_")
+            elif piece.color == chess.WHITE:
+                row.append("W")
+            else:
+                row.append("B")
+
+        grid.append(row)
+
+    return grid
+

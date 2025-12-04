@@ -6,6 +6,9 @@ import Board
 
 PIXELS_PER_SQUARE = 80
 THRESHOLD = 0.08
+WHITE_RATIO = 1.00
+BLACK_RATIO = 1.00
+
 
 def detect_pieces(img, M):
     gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
@@ -29,7 +32,7 @@ def detect_pieces(img, M):
     if new_m is not None:
         M = new_m
 
-    norm_img = warp_img(gray, M)
+    norm_img = warp_img(img, M)
     norm_canny = warp_img(dilate, M)
     
    # disk = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(13,13))
@@ -66,17 +69,20 @@ def detect_pieces(img, M):
 
     t = 0
     if even_avg > odd_avg:
-        white_avg = (odd_avg + even_avg * 3) / 4
-        black_avg = odd_avg * 0.8
+        white_avg = even_avg * WHITE_RATIO
+        black_avg = odd_avg * BLACK_RATIO
     else:
-        white_avg = (odd_avg * 3 + even_avg) / 4
-        black_avg = even_avg * 0.8
+        white_avg = odd_avg * WHITE_RATIO
+        black_avg = even_avg * BLACK_RATIO
         t = 1
 
     ## comparing gray values not working because white piece on white square is darker than a white square, maybe just get center of image and 50/50 it
     board = Board.empty_board()
     for pos in piece_tiles:
-        avg = np.mean(tile_rect(norm_img, pos))
+        tile = tile_rect(norm_img, pos)
+        mask = extract_piece_mask(tile, sum(pos) % 2 == t)
+        board[pos[1]-1][pos[0]-1] = detect_piece_color(tile, mask)
+        '''avg = np.mean(tile_rect(norm_img, pos))
         if sum(pos) % 2 == t:
             if avg > white_avg:
                 board[pos[1]-1][pos[0]-1] = 'W'
@@ -86,9 +92,66 @@ def detect_pieces(img, M):
             if avg > black_avg:
                 board[pos[1]-1][pos[0]-1] = 'W'
             else:
-                board[pos[1]-1][pos[0]-1] = 'B'
+                board[pos[1]-1][pos[0]-1] = 'B' '''
 
     return board, norm_canny, M
+
+def detect_piece_color(tile_img, mask):
+    if mask is None:
+        return None
+
+    pixels = tile_img[mask == 255]
+    if pixels.size == 0:
+        return None
+
+    lab = cv2.cvtColor(pixels.reshape(-1,1,3).astype('uint8'), cv2.COLOR_BGR2LAB)
+    L = lab[:,:,0].flatten()
+
+    mean_L = np.mean(L)
+
+    # threshold is easy now because mask has isolated only the piece pixels
+    return "W" if mean_L > 130 else "B"
+
+
+import cv2
+import numpy as np
+
+def extract_piece_mask(tile_img, tile_is_white):
+    """
+    tile_img: BGR image of the tile
+    tile_is_white: True if the board tile is white/light, False if black/dark
+    Returns: mask of the piece (0/255) or None if no piece detected
+    """
+    gray = cv2.cvtColor(tile_img, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    # 1. Threshold based on tile color
+    if tile_is_white:
+        # white square → piece is darker → normal OTSU foreground
+        _, mask = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    else:
+        # black square → piece is brighter → invert logic
+        _, mask = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    # 2. Clean up mask
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+
+    # 3. Find largest blob = piece
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+
+    cnt = max(contours, key=cv2.contourArea)
+    if cv2.contourArea(cnt) < 50:
+        return None
+
+    # final mask from contour
+    final_mask = np.zeros_like(mask)
+    cv2.drawContours(final_mask, [cnt], -1, 255, -1)
+
+    return final_mask
 
 def normalize_img(img, gray, edges):
     ret, corners = cv2.findChessboardCorners(edges, (7,7), None)
@@ -130,10 +193,6 @@ def get_tiles(img) -> dict:
         tiles[pos] =  np.count_nonzero(t) / max(t.size, 1)
 
     return tiles
-
-def get_color(img, pos):
-    tile = tile_rect(img, pos)
-    np.mean(tile, axis=(0,1))
 
 def tile_rect(img, pos):
     x = pos[0] 

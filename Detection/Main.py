@@ -4,6 +4,8 @@ import PieceDetection as pd
 import Board
 import time
 
+import Connection
+
 def main():
     cap = cv2.VideoCapture(0)
 
@@ -22,6 +24,8 @@ def main():
     M = pd.calibrate(cap)
 
     board = Board.Board()
+    
+    Connection.init_connection(board)
 
     while True:
         keypress = cv2.waitKey(1) & 0xFF
@@ -29,16 +33,14 @@ def main():
             break
 
         if keypress == ord('r'):
-            #board = Board.new_board()
-            #board.set_board()
-            pass
+            board.reset()
 
-        if keypress == ord('<'):
-            pd.THRESHOLD -= 0.01
-            print(f"Threshold: {pd.THRESHOLD}")
-        if keypress == ord('>'):
-            pd.THRESHOLD += 0.01
-            print(f"Threshold: {pd.THRESHOLD}")
+        if keypress == ord('{'):
+            pd.BLACK_RATIO -= 0.01
+            print(f"Threshold: {pd.BLACK_RATIO}")
+        if keypress == ord('}'):
+            pd.BLACK_RATIO += 0.01
+            print(f"Threshold: {pd.BLACK_RATIO}")
 
         ret, frame = cap.read()
         if not ret:
@@ -66,8 +68,11 @@ def main():
 
         print(new_board)
 
-        if (board.validate_board_change(new_board)):
+        ret, move = board.validate_board_change(new_board)
+        if (ret):
             print("Valid Move!")
+            Connection.send_move(move)
+
 
         cv2.imshow('Raw Camera Feed', raw_img)
         cv2.imshow('Camera Feed', processed_img)
