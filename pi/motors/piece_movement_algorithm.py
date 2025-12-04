@@ -9,8 +9,11 @@
 #
 # Added:
 #   • Socket.IO client to receive move commands over Wi-Fi
-#   • Event: "move_piece" with payload {"start": "E4", "end": "E5"}
+#   • Event: "move_piece" with payload {"start": "E4", "end": "E5", "capture": false}
 #   • CLI mode still available with: python3 motor_control_median.py cli
+#   • Capture handling:
+#       - Remove captured piece from END square to a capture rack along the H-side
+#       - Then move attacking piece START -> END using normal median lane
 
 import RPi.GPIO as GPIO
 import time
@@ -20,7 +23,7 @@ import socketio  # pip install "python-socketio[client]"
 
 # ----------------------------- Socket.IO config -----------------------------
 # Change this to James' backend URL, e.g. "http://192.168.1.50:3000"
-SOCKETIO_SERVER_URL = "http://172.17.107.68:3000"
+SOCKETIO_SERVER_URL = "http://172.17.44.215:3000"
 
 sio = socketio.Client()
 
@@ -50,7 +53,7 @@ STEPS_PER_TILE = int(round(STEPS_PER_IN * TILE_INCHES))
 HALF_TILE_STEPS = STEPS_PER_TILE // 2
 
 # Soft limits (inches from origin center A1) — keep generous margins
-X_MAX_IN, Y_MAX_IN = 13.0, 14.0
+X_MAX_IN, Y_MAX_IN = 14.5, 14.0
 X_MAX_STEPS = int(round(STEPS_PER_IN * X_MAX_IN))
 Y_MAX_STEPS = int(round(STEPS_PER_IN * Y_MAX_IN))
 
@@ -61,6 +64,23 @@ INVERT_X    = False
 
 # Step timing: (one HIGH+LOW pair per microstep pulse)
 STEP_DELAY = 0.0036   # seconds; increase if you skip
+
+# ----------------------------- Capture zone config -----------------------------
+# Capture rack along the H-side (right side of the board).
+# Coordinates are in "tile units" with A1 center = (0,0).
+# We place captured pieces in a vertical column near the H-file, spaced closer
+# than one tile so we can fit many of them.
+X_MAX_TILES = X_MAX_STEPS / STEPS_PER_TILE
+Y_MAX_TILES = Y_MAX_STEPS / STEPS_PER_TILE
+
+CAPTURE_X_TILES          = min(8.5, X_MAX_TILES - 0.1)  # near/right of H-file, inside soft limit
+CAPTURE_Y_START_TILES    = 0.5                          # a bit above A-rank edge
+CAPTURE_Y_SPACING_TILES  = 0.5                           # tighter spacing than board
+CAPTURE_MAX_SLOTS        = int(
+    (Y_MAX_TILES - CAPTURE_Y_START_TILES) // CAPTURE_Y_SPACING_TILES
+)
+
+capture_index = 0  # how many pieces have been parked so far
 
 # ----------------------------- GPIO setup -----------------------------
 GPIO.setmode(GPIO.BCM)
@@ -85,11 +105,15 @@ def _set_dir(pin: int, cw: bool, invert: bool = False):
     GPIO.output(pin, GPIO.HIGH if (cw != invert) else GPIO.LOW)
 
 def _pulse(step_a: bool, step_b: bool):
-    if step_a: GPIO.output(STEP1, GPIO.HIGH)
-    if step_b: GPIO.output(STEP2, GPIO.HIGH)
+    if step_a:
+        GPIO.output(STEP1, GPIO.HIGH)
+    if step_b:
+        GPIO.output(STEP2, GPIO.HIGH)
     time.sleep(STEP_DELAY)
-    if step_a: GPIO.output(STEP1, GPIO.LOW)
-    if step_b: GPIO.output(STEP2, GPIO.LOW)
+    if step_a:
+        GPIO.output(STEP1, GPIO.LOW)
+    if step_b:
+        GPIO.output(STEP2, GPIO.LOW)
     time.sleep(STEP_DELAY)
 
 def _move_corexy(dx_steps: int, dy_steps: int):
@@ -126,7 +150,7 @@ def tiles_to_steps_y(delta_tiles: float) -> int:
     return int(round(delta_tiles * STEPS_PER_TILE))
 
 # ----------------------------- Chess helpers -----------------------------
-def parse_square(sq: str) -> Tuple[int,int]:
+def parse_square(sq: str) -> Tuple[int, int]:
     """
     Convert 'E4' to zero-based (col,row) = (4,3) with A1=(0,0).
     col: A..H => 0..7 ; row: 1..8 => 0..7
@@ -138,7 +162,7 @@ def parse_square(sq: str) -> Tuple[int,int]:
     row = int(sq[1]) - 1
     return (col, row)
 
-def center_of_square_tiles(col0: int, row0: int) -> Tuple[float,float]:
+def center_of_square_tiles(col0: int, row0: int) -> Tuple[float, float]:
     """
     Return center in 'tile units' with A1 at (0,0). So E4 center is (4,3).
     """
@@ -160,8 +184,16 @@ def move_y_tiles(delta_tiles: float):
     global y_pos_steps
     dy = tiles_to_steps_y(delta_tiles)
     target = y_pos_steps + dy
+
+    # --- Rounding safety near origin ---
+    # If we're within ±2 steps of 0, just snap to exactly 0
+    if -2 <= target <= 2:
+        dy = -y_pos_steps   # move exactly back to 0
+        target = 0
+
     if target < 0 or target > Y_MAX_STEPS:
         raise RuntimeError("Y soft-limit exceeded")
+
     _move_corexy(dx_steps=0, dy_steps=dy)
     y_pos_steps = target
 
@@ -240,14 +272,12 @@ def approach_square_with_early_magnet(col0: int, row0: int, early_tiles: float =
 # ----------------------------- Path planning (median-lane, X-first) -----------------------------
 def plan_median_xfirst(start_sq: str, end_sq: str) -> List[Tuple[str, float]]:
     """
-    New plan:
+    Median-lane path from start_sq to end_sq (board squares):
         +0.5 Y                       # enter horizontal aisle above start
         (xe - xs - 0.5*sgn(dx)) X    # traverse in the vertical aisle beside destination column
         (ye - ys) Y                  # long Y move within the aisle
         (0.5*sgn(dx)) X              # side-hop into the destination column center
-        -0.5 Y                       # drop into the destination square center
-
-    If dx == 0 (same column), the ±0.5 X hops vanish (sgn=0).
+        -0.5..-0.75 Y                # drop into the destination square center
     """
     cs, rs = parse_square(start_sq)
     ce, re = parse_square(end_sq)
@@ -266,6 +296,28 @@ def plan_median_xfirst(start_sq: str, end_sq: str) -> List[Tuple[str, float]]:
     if s != 0:
         segs.append(("X", 0.5 * s))          # step sideways into column center
     segs.append(("Y", -0.75))                # drop into destination center
+    return segs
+
+def plan_median_from_current_to_target_tiles(target_x_tiles: float,
+                                             target_y_tiles: float) -> List[Tuple[str, float]]:
+    """
+    Same median-lane idea, but from the *current* carriage position (in tiles)
+    to an arbitrary tile coordinate (used for capture rack).
+    """
+    cur_x_tiles = x_pos_steps / STEPS_PER_TILE
+    cur_y_tiles = y_pos_steps / STEPS_PER_TILE
+
+    dx = target_x_tiles - cur_x_tiles
+    dy = target_y_tiles - cur_y_tiles
+    s = _sign(dx)
+
+    segs: List[Tuple[str, float]] = []
+    segs.append(("Y", +0.5))                 # into horizontal aisle
+    segs.append(("X", dx - 0.5 * s))         # traverse X inside aisle
+    segs.append(("Y", dy))                   # long Y in aisle
+    if s != 0:
+        segs.append(("X", 0.5 * s))          # side hop toward target center
+    segs.append(("Y", -0.75))                # drop down toward target
     return segs
 
 def execute_segments_with_piece(segments: List[Tuple[str, float]], corner_dwell_s: float = 0.10):
@@ -288,10 +340,25 @@ def execute_segments_with_piece(segments: List[Tuple[str, float]], corner_dwell_
         _mag_off()
         _enable_drives(False)
 
+# ----------------------------- Capture rack helpers -----------------------------
+def alloc_capture_slot_tiles() -> Tuple[float, float]:
+    """
+    Allocate the next capture position along the H-side capture rack.
+    Returns target (x_tiles, y_tiles).
+    """
+    global capture_index
+    if capture_index >= CAPTURE_MAX_SLOTS:
+        raise RuntimeError("Capture zone is full")
+
+    cx = CAPTURE_X_TILES
+    cy = CAPTURE_Y_START_TILES + capture_index * CAPTURE_Y_SPACING_TILES
+    capture_index += 1
+    return cx, cy
+
 # ----------------------------- High-level: move one piece -----------------------------
 def move_piece(start_sq: str, end_sq: str):
     """
-    Full sequence:
+    Normal (non-capture) move:
       1) Travel (no piece at first) to start square, with magnet turning on
          ~0.5 tile before the center so it grabs the piece while sliding under.
       2) Plan median-lane path (X-first, aisle-correct)
@@ -311,12 +378,49 @@ def move_piece(start_sq: str, end_sq: str):
 
     print(f"[Done] Reached {end_sq}. Magnet released.")
 
+def capture_then_move_piece(start_sq: str, end_sq: str):
+    """
+    Capture sequence:
+      1) Go to END square first, pick up the piece being captured.
+      2) Move that piece to the capture rack along the H-side of the board.
+      3) Then move the attacking piece from START -> END using the normal median path.
+
+    This avoids ever trying to have two pieces in the same square under the magnet.
+    """
+    # --- 1) Remove and park the captured piece ---
+    ce, re = parse_square(end_sq)
+    print(f"[Cap] Moving to {end_sq} to pick up captured piece...")
+    approach_square_with_early_magnet(ce, re, early_tiles=0.5)
+
+    cx, cy = alloc_capture_slot_tiles()
+    print(f"[Cap] Carrying captured piece from {end_sq} to capture rack at "
+          f"({cx:.2f} tiles, {cy:.2f} tiles)...")
+    segs = plan_median_from_current_to_target_tiles(cx, cy)
+    execute_segments_with_piece(segs)
+    print(f"[Cap] Captured piece parked. Now moving attacker {start_sq} -> {end_sq}...")
+
+    # --- 2) Move the attacking piece into the now-empty square ---
+    move_piece(start_sq, end_sq)
+
+def go_home_a1():
+    """
+    Convenience move: return carriage (no piece) to the A1 center.
+    This assumes the software position is still accurate (no skipped steps).
+    """
+    print("[Home] Returning to A1 center (A1)...")
+    _mag_off()  # make sure we're not holding a piece
+    # A1 is (col,row) = (0,0)
+    go_to_square_center(0, 0)
+    print("[Home] At A1 center.")
+
 # ----------------------------- Diagnostics -----------------------------
 def report():
     x_in = x_pos_steps / STEPS_PER_IN
     y_in = y_pos_steps / STEPS_PER_IN
-    print(f"Pos ≈ ({x_in:.3f} in, {y_in:.3f} in) | "
-          f"Tiles ≈ ({x_pos_steps/STEPS_PER_TILE:.3f}, {y_pos_steps/STEPS_PER_TILE:.3f})")
+    print(
+        f"Pos ≈ ({x_in:.3f} in, {y_in:.3f} in) | "
+        f"Tiles ≈ ({x_pos_steps / STEPS_PER_TILE:.3f}, {y_pos_steps / STEPS_PER_TILE:.3f})"
+    )
 
 # ----------------------------- Hardware cleanup -----------------------------
 def hardware_cleanup():
@@ -337,7 +441,8 @@ def hardware_cleanup():
 def run_cli_mode():
     print(f"Config: steps/in={STEPS_PER_IN}, steps/tile≈{STEPS_PER_TILE} (tile={TILE_INCHES}\")")
     print("Assuming carriage is homed at A1 center (0,0).")
-    print('Enter moves as "E4, E5". Commands: pos, quit')
+    print('Enter moves as "E4, E5" for normal moves or "E4xE5" for captures.')
+    print('Commands: pos, home, quit')
 
     while True:
         raw = input("> ").strip()
@@ -350,18 +455,38 @@ def run_cli_mode():
         if low in ("p", "pos", "where"):
             report()
             continue
-
-        # Expect "E4, E5"
-        try:
-            start_sq, end_sq = [s.strip().upper() for s in raw.split(",")]
-            parse_square(start_sq)
-            parse_square(end_sq)
-        except Exception:
-            print('Format error. Try: E4, E5   (or "pos", "quit")')
+        if low in ("h", "home", "origin", "a1"):
+            go_home_a1()
+            report()
             continue
 
+        capture_flag = False
+
+        # Capture syntax: E4xE5 (no comma)
+        if "x" in low and "," not in raw:
+            try:
+                start_sq, end_sq = [s.strip().upper() for s in low.split("x")]
+                parse_square(start_sq)
+                parse_square(end_sq)
+                capture_flag = True
+            except Exception:
+                print('Format error. Try: E4xE5 for captures, or "E4, E5" for normal moves.')
+                continue
+        else:
+            # Normal syntax: "E4, E5"
+            try:
+                start_sq, end_sq = [s.strip().upper() for s in raw.split(",")]
+                parse_square(start_sq)
+                parse_square(end_sq)
+            except Exception:
+                print('Format error. Try: E4, E5   (or "pos", "quit")')
+                continue
+
         try:
-            move_piece(start_sq, end_sq)
+            if capture_flag:
+                capture_then_move_piece(start_sq, end_sq)
+            else:
+                move_piece(start_sq, end_sq)
             report()
         except Exception as e:
             print(f"[ERROR] {e}")
@@ -379,28 +504,43 @@ def disconnect():
 def on_move_piece(data):
     """
     Expected payload shape:
-        { "start": "E4", "end": "E5" }
+        { "start": "E4", "end": "E5", "capture": false }
+
+    If capture is true, we:
+      1) Remove the piece on 'end' to the capture rack
+      2) Then move the piece from 'start' to 'end'
     """
     try:
         start_sq = data.get("start", "").strip().upper()
         end_sq   = data.get("end", "").strip().upper()
-        print(f"[NET] Received move_piece: {start_sq} -> {end_sq}")
+        capture_flag = bool(data.get("capture"))
+
+        print(f"[NET] Received move_piece: {start_sq} -> {end_sq} (capture={capture_flag})")
 
         # Validate squares before moving
         parse_square(start_sq)
         parse_square(end_sq)
 
-        move_piece(start_sq, end_sq)
+        if capture_flag:
+            capture_then_move_piece(start_sq, end_sq)
+        else:
+            move_piece(start_sq, end_sq)
         report()
 
         # Optional: emit ack back to server
-        sio.emit("move_piece_done", {"start": start_sq, "end": end_sq, "status": "ok"})
+        sio.emit("move_piece_done", {
+            "start": start_sq,
+            "end": end_sq,
+            "capture": capture_flag,
+            "status": "ok",
+        })
     except Exception as e:
         print(f"[NET ERROR] {e}")
         try:
             sio.emit("move_piece_done", {
                 "start": data.get("start"),
                 "end": data.get("end"),
+                "capture": data.get("capture"),
                 "status": "error",
                 "message": str(e),
             })
@@ -429,8 +569,12 @@ if __name__ == "__main__":
     finally:
         hardware_cleanup()
 
-
+# ----------------------------- Systemd service instructions -----------------------------
 # Stop the service: sudo systemctl stop chessbot.service
 # Restart: sudo systemctl restart chessbot.service
 # Disable autostart:sudo systemctl disable chessbot.service
 # View logs: journalctl -u chessbot.service -f
+# Activate virtual environment in motors folder: source .venv/bin/activate
+# Run in CLI mode: cd ~/senior-design/motors
+#                  python3 piece_movement_algorithm.py cli
+# ----------------------------------------------------------------------------------------
