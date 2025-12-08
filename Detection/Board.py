@@ -4,7 +4,6 @@ class Board:
     def __init__(self):
         self.last_valid_board = new_board()
         self.chess = chess.Board()
-        
 
     def set_board(self, board : chess.Board):
         self.chess = board
@@ -15,7 +14,6 @@ class Board:
     
     def set_last_valid_board(self, board: list):
         self.last_valid_board = board
-    
 
     def reset(self):
         self.chess = chess.Board()

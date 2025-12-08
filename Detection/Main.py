@@ -3,6 +3,7 @@ import mediapipe as mp
 import PieceDetection as pd
 import Board
 import time
+import Gantry_server
 
 import Connection
 
@@ -26,6 +27,8 @@ def main():
     board = Board.Board()
     
     Connection.init_connection(board)
+
+    server_thread = Gantry_server.start_server_in_thread()
 
     while True:
         keypress = cv2.waitKey(1) & 0xFF

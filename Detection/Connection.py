@@ -6,6 +6,16 @@ SERVER_URL = "http://localhost:5000"
 sio = socketio.Client()
 
 
+import requests
+import chess
+
+GANTRY_SERVER_URL = "http://172.17.88.122:3000"   # change to your server IP
+
+def send_move_to_gantry(start, end, is_capture):
+    print("Request:", is_capture)
+    r = requests.get(f"{GANTRY_SERVER_URL}/move", params={"start": start, "end": end, "capture": is_capture})
+    print("Server replied:", r.text)
+
 def init_connection(board):
     global room
     global Board
@@ -22,43 +32,6 @@ def init_connection(board):
     room = input("🏠 Enter room name (e.g., game1, test, etc.): ").strip() or "default"
     sio.emit("join", {"room": room})
     print(f"📥 Joined room: {room}")
-
-    #threading.Thread(target=input_thread(), daemon=True).start()
-
-def input_thread():
-    print("\n🎮 Commands:")
-    print("  move e2e4   - Make a move")
-    print("  undo        - Undo last move")
-    print("  reset       - Reset game")
-    print("  random      - Random legal move")
-    print("  exit        - Quit\n")
-
-    while True:
-        try:
-            cmd = input("> ").strip().lower()
-            if not cmd:
-                continue
-            if cmd.startswith("move"):
-                parts = cmd.split()
-                if len(parts) == 2:
-                    send_move(parts[1])
-                else:
-                    print("❗ Usage: move e2e4")
-            elif cmd == "undo":
-                send_undo()
-            elif cmd == "reset":
-                send_reset()
-            elif cmd == "random":
-                send_random()
-            elif cmd in ("exit", "quit"):
-                sio.disconnect()
-                break
-            else:
-                print("❓ Unknown command.")
-        except (KeyboardInterrupt, EOFError):
-            sio.disconnect()
-            break
-
 
 # --------------------
 # Event Handlers
@@ -82,16 +55,34 @@ def disconnect():
 def on_message(msg):
     print(f"💬 {msg}")
 
+@sio.on("player_color")
+def on_color(data):
+    global player_color
+    player_color = data.get("color")
+    print(f"💬 Player color set to {player_color}")
 
 @sio.on("board_update")
 def on_board_update(data):
     global current_turn
     current_turn = data.get("turn", "Unknown")
+
+    fen = data.get("fen")
+    if fen is None:
+        print("⚠️ board_update received with no FEN field.")
+        return
+
     print(f"\n♟ Board updated — {current_turn}'s turn.")
-    print(f"SVG updated ({len(data['svg'])} bytes).")
-    with open(f"board_{room}.svg", "w") as f:
-        f.write(data["svg"])
-    print(f"💾 Saved board to board_{room}.svg")
+    print(f"FEN: {fen}")
+
+    Board.set_board(chess.Board(fen))
+    
+    if (data.get("turn") == player_color):
+        uci_move = data.get("last_move").upper()
+        capture = bool(data.get("capture"))
+        print(capture)
+
+        send_move_to_gantry(uci_move[0:2], uci_move[2:4], capture)
+    
 
 
 # --------------------

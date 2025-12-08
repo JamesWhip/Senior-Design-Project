@@ -22,10 +22,11 @@ def get_or_create_room(room_id):
     return rooms[room_id]
 
 
-def board_svg(board, last_move):
+def board_svg(board, last_move, capture):
     """Return SVG + turn info for broadcasting."""
     svg = chess.svg.board(board=board, lastmove=last_move, coordinates=True, size=480)
-    return {"svg": svg, "turn": "White" if board.turn else "Black"}
+    return {"svg": svg, "turn": "white" if board.turn else "black", 'fen':board.fen(), 
+            "last_move": last_move.uci() if last_move is not None else None, "capture": capture}
 
 
 @app.route("/")
@@ -57,7 +58,7 @@ def on_join(data):
     room["players"][request.sid] = color
 
     emit("player_color", {"color": color})
-    emit("board_update", board_svg(room["board"], room["last_move"]), room=room_id)
+    emit("board_update", board_svg(room["board"], room["last_move"], False), room=room_id)
     print(f"Client {request.sid} joined room {room_id} as {color}")
 
 
@@ -65,6 +66,7 @@ def on_join(data):
 def handle_move(data):
     room_id = data["room"]
     from_sq, to_sq = data["from"], data["to"]
+    return_svg = data.get("return_svg", True)
 
     room = get_or_create_room(room_id)
     board = room["board"]
@@ -84,9 +86,13 @@ def handle_move(data):
                 chess.square_rank(chess.parse_square(to_sq)) in [0, 7]):
             move.promotion = chess.QUEEN
         if move in board.legal_moves:
+            capture = board.is_capture(move)
             board.push(move)
             room["last_move"] = move
-            emit("board_update", board_svg(board, move), room=room_id)
+            
+            print(capture)
+            emit("board_update", board_svg(board, move, capture), room=room_id)
+
     except Exception as e:
         print("Invalid move:", e)
 
@@ -98,7 +104,7 @@ def handle_undo(data):
     if room["board"].move_stack:
         room["board"].pop()
         room["last_move"] = None
-        emit("board_update", board_svg(room["board"], None), room=room_id)
+        emit("board_update", board_svg(room["board"], None, False), room=room_id)
 
 
 @socketio.on("reset")
@@ -107,7 +113,7 @@ def handle_reset(data):
     room = get_or_create_room(room_id)
     room["board"] = chess.Board()
     room["last_move"] = None
-    emit("board_update", board_svg(room["board"], None), room=room_id)
+    emit("board_update", board_svg(room["board"], None, False), room=room_id)
 
 
 @socketio.on("disconnect")
