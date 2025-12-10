@@ -7,7 +7,6 @@
 #   • Board squares are TILE_INCHES pitch, 8×8 board with A1 bottom-left
 #   • No obstacle checking yet (pure geometric plan as requested)
 #
-# Added:
 #   • Socket.IO client to receive move commands over Wi-Fi
 #   • Event: "move_piece" with payload {"start": "E4", "end": "E5", "capture": false}
 #   • CLI mode still available with: python3 motor_control_median.py cli
@@ -20,10 +19,11 @@ import time
 from typing import List, Tuple
 import sys
 import socketio  # pip install "python-socketio[client]"
+import signal    # for out-of-band “home” command via SIGUSR1
 
 # ----------------------------- Socket.IO config -----------------------------
-# Change this to James' backend URL, e.g. "http://192.168.1.50:3000"
-SOCKETIO_SERVER_URL = "http://172.17.44.215:3000"
+# Change this to James' backend URL
+SOCKETIO_SERVER_URL = "http://172.17.88.122:3000"
 
 sio = socketio.Client()
 
@@ -48,7 +48,7 @@ STEPS_PER_MM   = (STEPS_PER_REV * MICROSTEP) / BELT_PER_REV_MM  # 5.0
 STEPS_PER_IN   = int(round(STEPS_PER_MM * 25.4))                  # ≈127
 
 # Chessboard pitch (center-to-center) — keep your current value
-TILE_INCHES    = 1.65625  # inches
+TILE_INCHES    = 1.6562  # inches
 STEPS_PER_TILE = int(round(STEPS_PER_IN * TILE_INCHES))
 HALF_TILE_STEPS = STEPS_PER_TILE // 2
 
@@ -63,7 +63,7 @@ INVERT_DIR2 = False
 INVERT_X    = False
 
 # Step timing: (one HIGH+LOW pair per microstep pulse)
-STEP_DELAY = 0.0036   # seconds; increase if you skip
+STEP_DELAY = 0.003   # seconds; increase if you skip
 
 # ----------------------------- Capture zone config -----------------------------
 # Capture rack along the H-side (right side of the board).
@@ -295,7 +295,7 @@ def plan_median_xfirst(start_sq: str, end_sq: str) -> List[Tuple[str, float]]:
     segs.append(("Y", dy))                   # long Y while in aisle
     if s != 0:
         segs.append(("X", 0.5 * s))          # step sideways into column center
-    segs.append(("Y", -0.75))                # drop into destination center
+    segs.append(("Y", -0.7))                # drop into destination center
     return segs
 
 def plan_median_from_current_to_target_tiles(target_x_tiles: float,
@@ -317,7 +317,7 @@ def plan_median_from_current_to_target_tiles(target_x_tiles: float,
     segs.append(("Y", dy))                   # long Y in aisle
     if s != 0:
         segs.append(("X", 0.5 * s))          # side hop toward target center
-    segs.append(("Y", -0.75))                # drop down toward target
+    segs.append(("Y", -0.7))                # drop down toward target
     return segs
 
 def execute_segments_with_piece(segments: List[Tuple[str, float]], corner_dwell_s: float = 0.10):
@@ -422,6 +422,22 @@ def report():
         f"Tiles ≈ ({x_pos_steps / STEPS_PER_TILE:.3f}, {y_pos_steps / STEPS_PER_TILE:.3f})"
     )
 
+# ----------------------------- Signal handler for “home” -----------------
+def _handle_sigusr1(signum, frame):
+    """
+    Systemd / OS-level “home” command:
+    Send SIGUSR1 to this process to return carriage to A1 center.
+    """
+    print("\n[SIG] SIGUSR1 received — homing carriage to A1...")
+    try:
+        go_home_a1()
+        report()
+    except Exception as e:
+        print(f"[SIG] Error while homing: {e}")
+
+# Register the handler so it’s active in both CLI and Socket.IO modes
+signal.signal(signal.SIGUSR1, _handle_sigusr1)
+
 # ----------------------------- Hardware cleanup -----------------------------
 def hardware_cleanup():
     # Always leave hardware safe
@@ -504,7 +520,7 @@ def disconnect():
 def on_move_piece(data):
     """
     Expected payload shape:
-        { "start": "E4", "end": "E5", "capture": false }
+        { "start": "E4", "end": "E5", "capture": "false" }
 
     If capture is true, we:
       1) Remove the piece on 'end' to the capture rack
@@ -513,7 +529,8 @@ def on_move_piece(data):
     try:
         start_sq = data.get("start", "").strip().upper()
         end_sq   = data.get("end", "").strip().upper()
-        capture_flag = bool(data.get("capture"))
+        capture_flag = str(data.get("capture", "")).lower() == "true"
+        print(data.get("capture"))
 
         print(f"[NET] Received move_piece: {start_sq} -> {end_sq} (capture={capture_flag})")
 
@@ -577,4 +594,5 @@ if __name__ == "__main__":
 # Activate virtual environment in motors folder: source .venv/bin/activate
 # Run in CLI mode: cd ~/senior-design/motors
 #                  python3 piece_movement_algorithm.py cli
+# Home while in server mode: sudo systemctl kill -s SIGUSR1 chessbot.service
 # ----------------------------------------------------------------------------------------
